@@ -26,25 +26,47 @@ class ReporterService : AccessibilityService() {
     private var isRunning = false
 
     private val TARGET_TEXTS = mapOf(
-        "laporkan_button"  to listOf("Laporkan", "Report"),
-        "illegal_goods"    to listOf("Illegal goods and services"),
-        "drugs"            to listOf("Drugs"),
-        "illegal_drugs"    to listOf("Illegal drugs"),
-        "final_report"     to listOf("Laporkan", "LAPORKAN 3 PESAN", "Report", "Send Report")
+        "laporkan_button" to listOf("Laporkan", "Report"),
+        "illegal_goods"   to listOf("Illegal goods and services"),
+        "drugs"           to listOf("Drugs"),
+        "illegal_drugs"   to listOf("Illegal drugs"),
+        "final_report"    to listOf("Laporkan", "LAPORKAN 3 PESAN", "Report", "Send Report")
     )
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!isRunning) return
         event ?: return
-        val rootNode = rootInActiveWindow ?: return
-        handler.postDelayed({ processState(rootNode) }, 600)
+        handler.postDelayed({ processAllWindows() }, 400)
+    }
+
+    // Scan SEMUA window aktif termasuk popup overlay
+    private fun processAllWindows() {
+        val allRoots = mutableListOf<AccessibilityNodeInfo>()
+
+        try {
+            windows?.forEach { window ->
+                window?.root?.let { allRoots.add(it) }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error iterating windows: ${e.message}")
+        }
+
+        // Fallback ke rootInActiveWindow
+        rootInActiveWindow?.let {
+            if (!allRoots.contains(it)) allRoots.add(it)
+        }
+
+        for (root in allRoots) {
+            processState(root)
+            if (currentState == State.DONE) break
+        }
     }
 
     private fun processState(root: AccessibilityNodeInfo) {
         when {
             // IDLE atau WAITING_ILLEGAL_GOODS:
-            // Cek langsung apakah "Illegal goods and services" sudah visible.
-            // Kalau iya, klik dan lanjut — tidak perlu nunggu tombol Laporkan awal.
+            // Langsung cek apakah "Illegal goods and services" sudah visible di layar.
+            // Jika iya, klik dan lanjut tanpa perlu nunggu tombol Laporkan awal.
             currentState == State.IDLE || currentState == State.WAITING_ILLEGAL_GOODS -> {
                 val illegalNode = findNodeByTexts(root, TARGET_TEXTS["illegal_goods"]!!)
                 if (illegalNode != null) {
@@ -53,7 +75,7 @@ class ReporterService : AccessibilityService() {
                     currentState = State.WAITING_DRUGS
                     return
                 }
-                // Fallback: kalau menu belum kebuka, cari tombol Laporkan awal
+                // Fallback: cari tombol Laporkan awal kalau menu belum terbuka
                 if (currentState == State.IDLE) {
                     val node = findNodeByTexts(root, TARGET_TEXTS["laporkan_button"]!!)
                     if (node != null) {
