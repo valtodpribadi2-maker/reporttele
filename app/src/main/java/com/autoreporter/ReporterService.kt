@@ -7,7 +7,9 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
+import android.util.DisplayMetrics
 import android.util.Log
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
@@ -21,31 +23,7 @@ class ReporterService : AccessibilityService() {
         var instance: ReporterService? = null
     }
 
-    // ================================================================
-    // Flow berdasarkan screenshot nyata:
-    // 1. Tap ⋮ → popup → tap "Laporkan"
-    // 2. Bottom sheet → tap "Illegal goods and services"
-    // 3. Sub-menu → tap "Drugs"
-    // 4. Sub-menu → tap "Illegal drugs"
-    // 5. Form → tap "Kirim Laporan"
-    // 6. Mode pilih pesan → centang semua → tap "Laporkan N pesan"
-    // ================================================================
-
-    private enum class State {
-        IDLE,
-        STEP_ILLEGAL_GOODS,
-        STEP_DRUGS,
-        STEP_ILLEGAL_DRUGS,
-        STEP_KIRIM_LAPORAN,
-        STEP_PILIH_PESAN,
-        STEP_SUBMIT_PESAN,
-        DONE
-    }
-
-    private var state = State.IDLE
     private var isRunning = false
-    private var retryCount = 0
-    private val MAX_RETRY = 10
 
     override fun onCreate() {
         super.onCreate()
@@ -58,147 +36,186 @@ class ReporterService : AccessibilityService() {
         showToast("AutoReporter siap ✓")
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (!isRunning) return
-        event ?: return
-        // Jalankan proses di setiap event UI
-        handler.postDelayed({ tick() }, 600)
-    }
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onInterrupt() { isRunning = false }
 
-    override fun onInterrupt() {
-        isRunning = false
+    // ================================================================
+    // GET SCREEN SIZE
+    // ================================================================
+    private fun getScreenSize(): Pair<Int, Int> {
+        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        val dm = DisplayMetrics()
+        wm.defaultDisplay.getRealMetrics(dm)
+        return Pair(dm.widthPixels, dm.heightPixels)
     }
 
     // ================================================================
-    // START — dipanggil dari MainActivity
+    // ENTRY POINT — dipanggil MainActivity setelah countdown selesai
     // ================================================================
-    fun startReporting() {
-        state = State.IDLE
+    fun runFullSequence() {
         isRunning = true
-        retryCount = 0
-        showToast("Mulai — buka Telegram, tap ⋮ lalu Laporkan")
-        handler.postDelayed({ tick() }, 1500)
-    }
+        val (w, h) = getScreenSize()
 
-    fun stopReporting() {
-        isRunning = false
-        state = State.IDLE
-        showToast("Dihentikan")
+        showToast("Tap ⋮...")
+
+        // STEP 1: Tap ⋮ — pojok kanan atas
+        // X = width - ~50px, Y = ~110px dari atas (di bawah status bar)
+        val dotX = w - 52f
+        val dotY = 115f
+
+        handler.postDelayed({
+            gestTap(dotX, dotY)
+
+            // STEP 2: Tap "Laporkan" di popup
+            // Popup muncul dari kanan atas, "Laporkan" adalah item ke-4
+            // Dari screenshot: Y kira2 26% dari height, X kira2 68% dari width
+            handler.postDelayed({
+                // Coba node detection dulu untuk "Laporkan"
+                val roots = getAllRoots()
+                val tapped = tapText(roots, "Laporkan", "Report")
+                if (tapped) {
+                    showToast("✓ Laporkan")
+                } else {
+                    // Fallback: koordinat estimasi posisi "Laporkan" di popup
+                    val lapX = w * 0.68f
+                    val lapY = h * 0.265f
+                    showToast("Tap Laporkan (koordinat)...")
+                    gestTap(lapX, lapY)
+                }
+
+                // STEP 3: "Illegal goods and services"
+                handler.postDelayed({
+                    stepIllegalGoods()
+                }, 1200)
+
+            }, 1000)
+        }, 500)
     }
 
     // ================================================================
-    // MAIN TICK — cek state dan jalankan aksi
+    // STEP 3: Illegal goods and services
     // ================================================================
-    private fun tick() {
-        if (!isRunning) return
-        retryCount++
-        if (retryCount > MAX_RETRY * 6) {
-            showToast("⚠ Timeout. Tap MULAI lagi dari awal.")
-            isRunning = false
+    private fun stepIllegalGoods(retry: Int = 0) {
+        if (retry > 8) { showToast("⚠ Tidak ketemu 'Illegal goods'"); return }
+        val roots = getAllRoots()
+        if (tapText(roots, "Illegal goods and services")) {
+            showToast("✓ Illegal goods and services")
+            handler.postDelayed({ stepDrugs() }, 1200)
+        } else {
+            handler.postDelayed({ stepIllegalGoods(retry + 1) }, 600)
+        }
+    }
+
+    // ================================================================
+    // STEP 4: Drugs
+    // ================================================================
+    private fun stepDrugs(retry: Int = 0) {
+        if (retry > 8) { showToast("⚠ Tidak ketemu 'Drugs'"); return }
+        val roots = getAllRoots()
+        if (tapText(roots, "Drugs")) {
+            showToast("✓ Drugs")
+            handler.postDelayed({ stepIllegalDrugs() }, 1200)
+        } else {
+            handler.postDelayed({ stepDrugs(retry + 1) }, 600)
+        }
+    }
+
+    // ================================================================
+    // STEP 5: Illegal drugs
+    // ================================================================
+    private fun stepIllegalDrugs(retry: Int = 0) {
+        if (retry > 8) { showToast("⚠ Tidak ketemu 'Illegal drugs'"); return }
+        val roots = getAllRoots()
+        if (tapText(roots, "Illegal drugs")) {
+            showToast("✓ Illegal drugs")
+            handler.postDelayed({ stepKirimLaporan() }, 1200)
+        } else {
+            handler.postDelayed({ stepIllegalDrugs(retry + 1) }, 600)
+        }
+    }
+
+    // ================================================================
+    // STEP 6: Kirim Laporan (tombol biru di halaman form)
+    // ================================================================
+    private fun stepKirimLaporan(retry: Int = 0) {
+        if (retry > 8) { showToast("⚠ Tidak ketemu 'Kirim Laporan'"); return }
+        val roots = getAllRoots()
+        if (tapText(roots, "Kirim Laporan", "Send Report")) {
+            showToast("✓ Kirim Laporan")
+            // Setelah ini bisa muncul mode pilih pesan
+            handler.postDelayed({ stepPilihPesan() }, 1500)
+        } else {
+            // Cek apakah sudah langsung di mode pilih pesan
+            if (hasText(roots, "Pilih pesan", "Select messages", "Laporkan Pesan")) {
+                showToast("Mode pilih pesan...")
+                stepPilihPesan()
+            } else {
+                handler.postDelayed({ stepKirimLaporan(retry + 1) }, 600)
+            }
+        }
+    }
+
+    // ================================================================
+    // STEP 7: Pilih pesan (centang semua) lalu submit
+    // ================================================================
+    private fun stepPilihPesan(retry: Int = 0) {
+        if (retry > 10) {
+            // Sudah cukup, coba submit saja
+            stepSubmitPesan()
             return
         }
 
         val roots = getAllRoots()
 
-        when (state) {
+        // Cek apakah tombol submit sudah muncul
+        if (hasTextContains(roots, "Laporkan", "Report")) {
+            handler.postDelayed({ stepSubmitPesan() }, 500)
+            return
+        }
 
-            State.IDLE, State.STEP_ILLEGAL_GOODS -> {
-                // Prioritas 1: langsung cek "Illegal goods and services" sudah visible
-                if (tapText(roots, "Illegal goods and services")) {
-                    showToast("✓ Illegal goods and services")
-                    state = State.STEP_DRUGS
-                    retryCount = 0
-                    return
-                }
-                // Prioritas 2: cari tombol Laporkan di popup atau bottom sheet
-                if (state == State.IDLE && tapText(roots, "Laporkan", "Report")) {
-                    showToast("✓ Laporkan")
-                    state = State.STEP_ILLEGAL_GOODS
-                    retryCount = 0
-                    return
-                }
-            }
+        // Centang semua checkbox yang ada
+        var checked = 0
+        for (root in roots) {
+            checked += checkAllCheckboxes(root)
+        }
 
-            State.STEP_DRUGS -> {
-                if (tapText(roots, "Drugs")) {
-                    showToast("✓ Drugs")
-                    state = State.STEP_ILLEGAL_DRUGS
-                    retryCount = 0
-                }
-            }
-
-            State.STEP_ILLEGAL_DRUGS -> {
-                if (tapText(roots, "Illegal drugs")) {
-                    showToast("✓ Illegal drugs")
-                    state = State.STEP_KIRIM_LAPORAN
-                    retryCount = 0
-                }
-            }
-
-            State.STEP_KIRIM_LAPORAN -> {
-                // Halaman form setelah "Illegal drugs"
-                // Tombolnya "Kirim Laporan" (bukan "Laporkan")
-                if (tapText(roots, "Kirim Laporan", "Send Report", "Submit")) {
-                    showToast("✓ Kirim Laporan")
-                    // Setelah ini mungkin muncul mode pilih pesan
-                    state = State.STEP_PILIH_PESAN
-                    retryCount = 0
-                    return
-                }
-                // Fallback: cek apakah sudah langsung di mode pilih pesan
-                if (hasText(roots, "Pilih pesan", "Select messages")) {
-                    state = State.STEP_PILIH_PESAN
-                    retryCount = 0
-                }
-            }
-
-            State.STEP_PILIH_PESAN -> {
-                // Mode "Pilih pesan" — centang semua pesan yang ada
-                // Cek apakah sudah ada pesan yang dipilih (tombol "Laporkan N pesan" muncul)
-                if (hasText(roots, "Laporkan", "Laporkan Pesan", "Report")) {
-                    // Ada pesan yang sudah terpilih, langsung submit
-                    state = State.STEP_SUBMIT_PESAN
-                    retryCount = 0
-                    tick()
-                    return
-                }
-                // Centang semua checkbox/pesan yang terlihat
-                val checked = checkAllMessages(roots)
-                if (checked > 0) {
-                    showToast("✓ Dipilih $checked pesan")
-                    state = State.STEP_SUBMIT_PESAN
-                    retryCount = 0
-                } else {
-                    // Tidak ada yang bisa dicentang, coba tap semua pesan visible
-                    tapFirstVisibleMessage(roots)
-                }
-            }
-
-            State.STEP_SUBMIT_PESAN -> {
-                // Tap tombol "Laporkan N pesan" / "Laporkan Pesan"
-                if (tapTextContains(roots, "Laporkan", "Report")) {
-                    showToast("✅ Laporan berhasil dikirim!")
-                    state = State.DONE
-                    isRunning = false
-                    sendBroadcast(Intent("com.autoreporter.REPORT_DONE"))
-                }
-            }
-
-            State.DONE -> {
-                isRunning = false
-            }
+        if (checked > 0) {
+            showToast("✓ Dipilih $checked pesan")
+            handler.postDelayed({ stepSubmitPesan() }, 800)
+        } else {
+            // Coba tap pesan pertama yang visible
+            tapFirstVisibleMessage(roots)
+            handler.postDelayed({ stepPilihPesan(retry + 1) }, 800)
         }
     }
 
     // ================================================================
-    // HELPERS — node finder + gesture
+    // STEP 8: Submit — tap "Laporkan N pesan"
+    // ================================================================
+    private fun stepSubmitPesan(retry: Int = 0) {
+        if (retry > 8) { showToast("✅ Selesai!"); done(); return }
+        val roots = getAllRoots()
+        // Cari tombol "Laporkan N pesan" atau "Laporkan Pesan"
+        if (tapTextContains(roots, "Laporkan", "Report")) {
+            showToast("✅ Laporan berhasil dikirim!")
+            done()
+        } else {
+            handler.postDelayed({ stepSubmitPesan(retry + 1) }, 600)
+        }
+    }
+
+    private fun done() {
+        isRunning = false
+        sendBroadcast(Intent("com.autoreporter.REPORT_DONE"))
+    }
+
+    // ================================================================
+    // HELPERS
     // ================================================================
 
     private fun getAllRoots(): List<AccessibilityNodeInfo> {
         val roots = mutableListOf<AccessibilityNodeInfo>()
-        try {
-            windows?.forEach { win -> win?.root?.let { roots.add(it) } }
-        } catch (e: Exception) { }
+        try { windows?.forEach { win -> win?.root?.let { roots.add(it) } } } catch (e: Exception) { }
         rootInActiveWindow?.let { if (!roots.contains(it)) roots.add(it) }
         return roots
     }
@@ -209,105 +226,77 @@ class ReporterService : AccessibilityService() {
                 val node = findNode(root, text) ?: continue
                 val bounds = Rect()
                 node.getBoundsInScreen(bounds)
-                if (!bounds.isEmpty && bounds.centerX() > 0 && bounds.centerY() > 0) {
+                if (!bounds.isEmpty) {
                     gestTap(bounds.centerX().toFloat(), bounds.centerY().toFloat())
                     return true
                 }
-                // Fallback performAction
                 if (performClick(node)) return true
             }
         }
         return false
     }
 
-    // Tap yang contains text (untuk "Laporkan 2 pesan" dll)
-    private fun tapTextContains(roots: List<AccessibilityNodeInfo>, vararg keywords: String): Boolean {
+    private fun tapTextContains(roots: List<AccessibilityNodeInfo>, vararg kws: String): Boolean {
         for (root in roots) {
-            val found = findNodeContains(root, *keywords)
-            if (found != null) {
-                val bounds = Rect()
-                found.getBoundsInScreen(bounds)
-                if (!bounds.isEmpty) {
-                    gestTap(bounds.centerX().toFloat(), bounds.centerY().toFloat())
-                    return true
-                }
-                if (performClick(found)) return true
+            val node = deepFindContains(root, kws, 0) ?: continue
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            if (!bounds.isEmpty) {
+                gestTap(bounds.centerX().toFloat(), bounds.centerY().toFloat())
+                return true
             }
+            if (performClick(node)) return true
         }
         return false
     }
 
     private fun hasText(roots: List<AccessibilityNodeInfo>, vararg texts: String): Boolean {
-        for (root in roots) {
-            for (text in texts) {
-                if (findNode(root, text) != null) return true
-            }
-        }
+        for (root in roots) for (text in texts) { if (findNode(root, text) != null) return true }
         return false
     }
 
-    // Centang semua message checkbox yang ada di mode "Pilih pesan"
-    private fun checkAllMessages(roots: List<AccessibilityNodeInfo>): Int {
-        var count = 0
-        for (root in roots) {
-            count += checkAllCheckboxes(root)
-        }
-        return count
+    private fun hasTextContains(roots: List<AccessibilityNodeInfo>, vararg kws: String): Boolean {
+        for (root in roots) { if (deepFindContains(root, kws, 0) != null) return true }
+        return false
     }
 
     private fun checkAllCheckboxes(node: AccessibilityNodeInfo?): Int {
         if (node == null) return 0
         var count = 0
-        // Cek apakah node ini adalah checkbox yang belum dicentang
-        if (node.className?.contains("CheckBox") == true ||
-            node.isCheckable && !node.isChecked) {
+        if ((node.className?.contains("CheckBox") == true || node.isCheckable) && !node.isChecked) {
             if (performClick(node)) count++
         }
-        for (i in 0 until node.childCount) {
-            count += checkAllCheckboxes(node.getChild(i))
-        }
+        for (i in 0 until node.childCount) count += checkAllCheckboxes(node.getChild(i))
         return count
     }
 
-    // Tap pesan pertama yang visible (di mode pilih pesan)
     private fun tapFirstVisibleMessage(roots: List<AccessibilityNodeInfo>) {
+        val (_, h) = getScreenSize()
         for (root in roots) {
-            val msg = findFirstMessage(root)
-            if (msg != null) {
-                val bounds = Rect()
-                msg.getBoundsInScreen(bounds)
-                if (!bounds.isEmpty) {
-                    gestTap(bounds.centerX().toFloat(), bounds.centerY().toFloat())
-                    return
-                }
-            }
+            val msg = findFirstMessage(root, h) ?: continue
+            val bounds = Rect()
+            msg.getBoundsInScreen(bounds)
+            if (!bounds.isEmpty) { gestTap(bounds.centerX().toFloat(), bounds.centerY().toFloat()); return }
         }
     }
 
-    private fun findFirstMessage(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+    private fun findFirstMessage(node: AccessibilityNodeInfo?, screenH: Int): AccessibilityNodeInfo? {
         if (node == null) return null
-        // Cari node yang kelihatan seperti pesan (bukan tombol, bukan header)
-        if (node.isVisibleToUser && node.isClickable &&
-            node.className?.contains("RelativeLayout") == true) {
+        if (node.isVisibleToUser && node.isClickable) {
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
-            // Harus di area tengah layar (bukan header/footer)
-            if (bounds.height() > 50 && bounds.top > 200) return node
+            if (bounds.height() > 50 && bounds.top > screenH * 0.15 && bounds.bottom < screenH * 0.85) return node
         }
         for (i in 0 until node.childCount) {
-            val r = findFirstMessage(node.getChild(i))
+            val r = findFirstMessage(node.getChild(i), screenH)
             if (r != null) return r
         }
         return null
     }
 
     private fun findNode(root: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
-        // Exact match via API
         val nodes = root.findAccessibilityNodeInfosByText(text)
-        if (!nodes.isNullOrEmpty()) {
-            return nodes.firstOrNull { it.isVisibleToUser }
-        }
-        // Deep search
+        if (!nodes.isNullOrEmpty()) return nodes.firstOrNull { it.isVisibleToUser }
         return deepFind(root, text, 0)
     }
 
@@ -315,63 +304,44 @@ class ReporterService : AccessibilityService() {
         if (node == null || depth > 30) return null
         val t = node.text?.toString() ?: ""
         val d = node.contentDescription?.toString() ?: ""
-        if ((t.equals(text, ignoreCase = true) || d.equals(text, ignoreCase = true)) && node.isVisibleToUser) {
-            return node
-        }
+        if ((t.equals(text, ignoreCase = true) || d.equals(text, ignoreCase = true)) && node.isVisibleToUser) return node
         for (i in 0 until node.childCount) {
-            val r = deepFind(node.getChild(i), text, depth + 1)
-            if (r != null) return r
+            val r = deepFind(node.getChild(i), text, depth + 1); if (r != null) return r
         }
         return null
     }
 
-    private fun findNodeContains(root: AccessibilityNodeInfo, vararg keywords: String): AccessibilityNodeInfo? {
-        return deepFindContains(root, keywords, 0)
-    }
-
-    private fun deepFindContains(node: AccessibilityNodeInfo?, keywords: Array<out String>, depth: Int): AccessibilityNodeInfo? {
+    private fun deepFindContains(node: AccessibilityNodeInfo?, kws: Array<out String>, depth: Int): AccessibilityNodeInfo? {
         if (node == null || depth > 30) return null
         val t = node.text?.toString()?.lowercase() ?: ""
         val d = node.contentDescription?.toString()?.lowercase() ?: ""
-        for (kw in keywords) {
-            if ((t.contains(kw.lowercase()) || d.contains(kw.lowercase())) && node.isVisibleToUser) {
-                return node
-            }
+        for (kw in kws) {
+            if ((t.contains(kw.lowercase()) || d.contains(kw.lowercase())) && node.isVisibleToUser) return node
         }
         for (i in 0 until node.childCount) {
-            val r = deepFindContains(node.getChild(i), keywords, depth + 1)
-            if (r != null) return r
+            val r = deepFindContains(node.getChild(i), kws, depth + 1); if (r != null) return r
         }
         return null
     }
 
     private fun gestTap(x: Float, y: Float) {
         val path = Path().apply { moveTo(x, y) }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 100)
+        val stroke = GestureDescription.StrokeDescription(path, 0, 120)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         dispatchGesture(gesture, object : GestureResultCallback() {
-            override fun onCompleted(g: GestureDescription) {
-                Log.d(TAG, "Gesture OK ($x, $y)")
-            }
-            override fun onCancelled(g: GestureDescription) {
-                Log.d(TAG, "Gesture cancelled ($x, $y)")
-            }
+            override fun onCompleted(g: GestureDescription) = Log.d(TAG, "Tap OK ($x,$y)")
+            override fun onCancelled(g: GestureDescription) = Log.d(TAG, "Tap cancelled ($x,$y)")
         }, null)
     }
 
     private fun performClick(node: AccessibilityNodeInfo): Boolean {
-        var target = node
-        var i = 0
-        while (!target.isClickable && target.parent != null && i < 8) {
-            target = target.parent; i++
-        }
-        return target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        var t = node; var i = 0
+        while (!t.isClickable && t.parent != null && i < 8) { t = t.parent; i++ }
+        return t.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     }
 
     private fun showToast(msg: String) {
-        handler.post {
-            Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show()
-        }
+        handler.post { Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show() }
         Log.d(TAG, msg)
     }
 }
