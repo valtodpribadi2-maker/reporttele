@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="24dp"
+    android:background="#121212">
+
+    <TextView
+        android:text="🤖 Auto Reporter"
+        android:textSize="28sp"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"/>
+
+    <TextView
+        android:text="Telegram Channel Reporter"
+        android:textSize="14sp"
+        android:textColor="#AAAAAA"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="32dp"/>
+
+    <TextView
+        android:id="@+id/tvStatus"
+        android:text="Memuat..."
+        android:textSize="16sp"
+        android:textColor="#FFD700"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:layout_marginBottom="40dp"/>
+
+    <Button
+        android:id="@+id/btnStart"
+        android:text="▶ MULAI AUTO REPORT"
+        android:textSize="16sp"
+        android:backgroundTint="#2196F3"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginBottom="16dp"/>
+
+    <Button
+        android:id="@+id/btnStop"
+        android:text="⏹ STOP"
+        android:textSize="16sp"
+        android:backgroundTint="#F44336"
+        android:enabled="false"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"/>
+
+</LinearLayout>
