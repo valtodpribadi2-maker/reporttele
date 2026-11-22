@@ -30,7 +30,7 @@ class ReporterService : AccessibilityService() {
         "illegal_goods"    to listOf("Illegal goods and services"),
         "drugs"            to listOf("Drugs"),
         "illegal_drugs"    to listOf("Illegal drugs"),
-        "final_report"     to listOf("Laporkan", "LAPORKAN 3 PESAN", "Report")
+        "final_report"     to listOf("Laporkan", "LAPORKAN 3 PESAN", "Report", "Send Report")
     )
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -41,24 +41,30 @@ class ReporterService : AccessibilityService() {
     }
 
     private fun processState(root: AccessibilityNodeInfo) {
-        when (currentState) {
-            State.IDLE -> {
-                val node = findNodeByTexts(root, TARGET_TEXTS["laporkan_button"]!!)
-                if (node != null) {
-                    Log.d(TAG, "Ditemukan: Tombol Laporkan awal")
-                    clickNode(node)
-                    currentState = State.WAITING_ILLEGAL_GOODS
-                }
-            }
-            State.WAITING_ILLEGAL_GOODS -> {
-                val node = findNodeByTexts(root, TARGET_TEXTS["illegal_goods"]!!)
-                if (node != null) {
-                    Log.d(TAG, "Ditemukan: Illegal goods and services")
-                    clickNode(node)
+        when {
+            // IDLE atau WAITING_ILLEGAL_GOODS:
+            // Cek langsung apakah "Illegal goods and services" sudah visible.
+            // Kalau iya, klik dan lanjut — tidak perlu nunggu tombol Laporkan awal.
+            currentState == State.IDLE || currentState == State.WAITING_ILLEGAL_GOODS -> {
+                val illegalNode = findNodeByTexts(root, TARGET_TEXTS["illegal_goods"]!!)
+                if (illegalNode != null) {
+                    Log.d(TAG, "Langsung deteksi: Illegal goods and services")
+                    clickNode(illegalNode)
                     currentState = State.WAITING_DRUGS
+                    return
+                }
+                // Fallback: kalau menu belum kebuka, cari tombol Laporkan awal
+                if (currentState == State.IDLE) {
+                    val node = findNodeByTexts(root, TARGET_TEXTS["laporkan_button"]!!)
+                    if (node != null) {
+                        Log.d(TAG, "Ditemukan: Tombol Laporkan awal")
+                        clickNode(node)
+                        currentState = State.WAITING_ILLEGAL_GOODS
+                    }
                 }
             }
-            State.WAITING_DRUGS -> {
+
+            currentState == State.WAITING_DRUGS -> {
                 val node = findNodeByTexts(root, TARGET_TEXTS["drugs"]!!)
                 if (node != null) {
                     Log.d(TAG, "Ditemukan: Drugs")
@@ -66,7 +72,8 @@ class ReporterService : AccessibilityService() {
                     currentState = State.WAITING_ILLEGAL_DRUGS
                 }
             }
-            State.WAITING_ILLEGAL_DRUGS -> {
+
+            currentState == State.WAITING_ILLEGAL_DRUGS -> {
                 val node = findNodeByTexts(root, TARGET_TEXTS["illegal_drugs"]!!)
                 if (node != null) {
                     Log.d(TAG, "Ditemukan: Illegal drugs")
@@ -74,7 +81,8 @@ class ReporterService : AccessibilityService() {
                     currentState = State.WAITING_LAPORKAN_FINAL
                 }
             }
-            State.WAITING_LAPORKAN_FINAL -> {
+
+            currentState == State.WAITING_LAPORKAN_FINAL -> {
                 val node = findNodeByTexts(root, TARGET_TEXTS["final_report"]!!)
                 if (node != null) {
                     Log.d(TAG, "Submit laporan final")
@@ -84,6 +92,7 @@ class ReporterService : AccessibilityService() {
                     sendBroadcast(Intent("com.autoreporter.REPORT_DONE"))
                 }
             }
+
             else -> {}
         }
     }
@@ -129,7 +138,9 @@ class ReporterService : AccessibilityService() {
         currentState = State.IDLE
     }
 
-    override fun onInterrupt() { isRunning = false }
+    override fun onInterrupt() {
+        isRunning = false
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
